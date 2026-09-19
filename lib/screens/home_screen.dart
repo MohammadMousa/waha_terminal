@@ -62,7 +62,7 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget _buildBody(TerminalState state, ColorScheme scheme) {
     switch (state.status) {
       case TerminalStatus.idle:
-        return const _IdleView(key: ValueKey('idle'));
+        return _IdleView(key: const ValueKey('idle'), linkStatus: state.linkStatusText);
 
       case TerminalStatus.pending:
       case TerminalStatus.reading:
@@ -116,7 +116,8 @@ class _HomeScreenState extends State<HomeScreen> {
 }
 
 class _IdleView extends StatelessWidget {
-  const _IdleView({super.key});
+  final String? linkStatus;
+  const _IdleView({super.key, this.linkStatus});
 
   @override
   Widget build(BuildContext context) {
@@ -134,6 +135,17 @@ class _IdleView extends StatelessWidget {
             configured ? 'Waiting for payment…' : 'Not configured — open Settings',
             style: TextStyle(color: scheme.outline),
           ),
+          if (linkStatus != null) ...[
+            const SizedBox(height: 16),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 32),
+              child: Text(
+                linkStatus!,
+                textAlign: TextAlign.center,
+                style: TextStyle(color: scheme.primary, fontSize: 13),
+              ),
+            ),
+          ],
         ],
       ),
     );

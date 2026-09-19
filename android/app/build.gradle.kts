@@ -43,3 +43,10 @@ kotlin {
 flutter {
     source = "../.."
 }
+
+dependencies {
+    // android.jar's org.json is a throwing stub on the plain JVM, so the
+    // link/codec unit tests need the real implementation.
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("org.json:json:20231013")
+}

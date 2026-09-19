@@ -50,6 +50,13 @@ class NfcService {
     }
   }
 
+  // Stops an in-progress poll (e.g. the kiosk cancelled the payment).
+  static Future<void> cancel() async {
+    try {
+      await FlutterNfcKit.finish();
+    } catch (_) {}
+  }
+
   // Polls for one NFC tag, reads EMV data via APDU, returns card data.
   static Future<EmvCardData> readCard({Duration timeout = const Duration(seconds: 90)}) async {
     try {

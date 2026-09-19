@@ -119,52 +119,68 @@ class UsbTerminalManager(
 
     /** Picks the first attached USB device (generic — no vendor/product filter) and opens/requests it. */
     fun connect() {
-        val candidate = usbManager.deviceList.values.firstOrNull()
-        if (candidate == null) {
-            onEvent("error", "No USB device attached")
-            return
+        try {
+            val candidate = usbManager.deviceList.values.firstOrNull()
+            if (candidate == null) {
+                onEvent("error", "No USB device attached")
+                return
+            }
+            if (usbManager.hasPermission(candidate)) {
+                openDevice(candidate)
+                return
+            }
+            onEvent("permissionRequested", candidate.deviceName)
+            val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) PendingIntent.FLAG_MUTABLE else 0
+            val permissionIntent = PendingIntent.getBroadcast(
+                context, 0, Intent(ACTION_USB_PERMISSION), flags,
+            )
+            usbManager.requestPermission(candidate, permissionIntent)
+        } catch (e: Exception) {
+            Log.i(TAG, "USB connect failed: ${e.message}")
+            onEvent("error", "USB connect failed")
         }
-        if (usbManager.hasPermission(candidate)) {
-            openDevice(candidate)
-            return
-        }
-        onEvent("permissionRequested", candidate.deviceName)
-        val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) PendingIntent.FLAG_MUTABLE else 0
-        val permissionIntent = PendingIntent.getBroadcast(
-            context, 0, Intent(ACTION_USB_PERMISSION), flags,
-        )
-        usbManager.requestPermission(candidate, permissionIntent)
     }
 
+    // Wrapped end to end: some devices/vendor builds throw from openDevice()
+    // or claimInterface() instead of returning null/false on failure (seen
+    // in the field as a bare IOException whose message is just the raw
+    // /dev/bus/usb/... node path — unusable if it reaches the UI verbatim).
+    // Every failure here must go through onEvent("error", <clear message>)
+    // so nothing native ever surfaces to Dart unformatted.
     private fun openDevice(dev: UsbDevice) {
-        val iface = (0 until dev.interfaceCount)
-            .map { dev.getInterface(it) }
-            .firstOrNull { it.endpointCount > 0 }
-        val conn = usbManager.openDevice(dev)
-        if (conn == null || iface == null) {
-            onEvent("error", "Failed to open USB device or no usable interface")
-            return
+        try {
+            val iface = (0 until dev.interfaceCount)
+                .map { dev.getInterface(it) }
+                .firstOrNull { it.endpointCount > 0 }
+            val conn = usbManager.openDevice(dev)
+            if (conn == null || iface == null) {
+                onEvent("error", "Failed to open USB device or no usable interface")
+                return
+            }
+            if (!conn.claimInterface(iface, true)) {
+                onEvent("error", "Failed to claim USB interface")
+                conn.close()
+                return
+            }
+            var inEp: UsbEndpoint? = null
+            var outEp: UsbEndpoint? = null
+            for (i in 0 until iface.endpointCount) {
+                val ep = iface.getEndpoint(i)
+                if (ep.type != UsbConstants.USB_ENDPOINT_XFER_BULK) continue
+                if (ep.direction == UsbConstants.USB_DIR_IN) inEp = ep
+                if (ep.direction == UsbConstants.USB_DIR_OUT) outEp = ep
+            }
+            device = dev
+            connection = conn
+            usbInterface = iface
+            endpointIn = inEp
+            endpointOut = outEp
+            Log.i(TAG, "USB connection opened")
+            onEvent("connected", dev.deviceName)
+        } catch (e: Exception) {
+            Log.i(TAG, "USB connection open failed: ${e.message}")
+            onEvent("error", "Could not open USB device — it may be held by another app or just unplugged")
         }
-        if (!conn.claimInterface(iface, true)) {
-            onEvent("error", "Failed to claim USB interface")
-            conn.close()
-            return
-        }
-        var inEp: UsbEndpoint? = null
-        var outEp: UsbEndpoint? = null
-        for (i in 0 until iface.endpointCount) {
-            val ep = iface.getEndpoint(i)
-            if (ep.type != UsbConstants.USB_ENDPOINT_XFER_BULK) continue
-            if (ep.direction == UsbConstants.USB_DIR_IN) inEp = ep
-            if (ep.direction == UsbConstants.USB_DIR_OUT) outEp = ep
-        }
-        device = dev
-        connection = conn
-        usbInterface = iface
-        endpointIn = inEp
-        endpointOut = outEp
-        Log.i(TAG, "USB connection opened")
-        onEvent("connected", dev.deviceName)
     }
 
     fun disconnect() {
@@ -203,10 +219,19 @@ class UsbTerminalManager(
             return
         }
         ioExecutor.execute {
-            val payload = "{\"cmd\":\"payment\",\"amount\":$amount,\"reference\":\"$reference\"}"
-                .toByteArray(StandardCharsets.UTF_8)
-            val sent = conn.bulkTransfer(out, payload, payload.size, 5000)
-            callback(sent >= 0, if (sent < 0) "USB write failed" else null)
+            // Must always invoke callback exactly once — a thrown (not just
+            // negative-return) bulkTransfer here would otherwise leave the
+            // Dart-side invokeMethod() awaiting forever, with no error and
+            // no timeout of its own.
+            try {
+                val payload = "{\"cmd\":\"payment\",\"amount\":$amount,\"reference\":\"$reference\"}"
+                    .toByteArray(StandardCharsets.UTF_8)
+                val sent = conn.bulkTransfer(out, payload, payload.size, 5000)
+                callback(sent >= 0, if (sent < 0) "USB write failed" else null)
+            } catch (e: Exception) {
+                Log.i(TAG, "USB write threw: ${e.message}")
+                callback(false, "USB write failed")
+            }
         }
     }
 
@@ -219,11 +244,16 @@ class UsbTerminalManager(
             return
         }
         ioExecutor.execute {
-            val buffer = ByteArray(inEp.maxPacketSize.coerceAtLeast(64))
-            val read = conn.bulkTransfer(inEp, buffer, buffer.size, timeoutMs)
-            if (read >= 0) {
-                callback(buffer.copyOf(read), null)
-            } else {
+            try {
+                val buffer = ByteArray(inEp.maxPacketSize.coerceAtLeast(64))
+                val read = conn.bulkTransfer(inEp, buffer, buffer.size, timeoutMs)
+                if (read >= 0) {
+                    callback(buffer.copyOf(read), null)
+                } else {
+                    callback(null, "USB read timed out or failed")
+                }
+            } catch (e: Exception) {
+                Log.i(TAG, "USB read threw: ${e.message}")
                 callback(null, "USB read timed out or failed")
             }
         }

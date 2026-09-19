@@ -3,8 +3,7 @@ package com.waha.waha_terminal
 import android.content.Intent
 import android.hardware.usb.UsbManager
 import android.util.Log
-import java.io.InputStream
-import java.io.OutputStream
+import org.json.JSONObject
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.EventChannel
@@ -18,6 +17,14 @@ class MainActivity : FlutterActivity() {
 
     private var usbTerminal: UsbTerminalManager? = null
     private var accessory: UsbAccessoryManager? = null
+    private var accessoryLink: AccessoryLink? = null
+    private var linkSink: EventChannel.EventSink? = null
+    private val linkMethodChannelName = "com.waha.waha_terminal/usb_link"
+    private val linkEventChannelName = "com.waha.waha_terminal/usb_link/events"
+
+    private fun emitLink(payload: Map<String, Any?>) {
+        runOnUiThread { linkSink?.success(payload) }
+    }
     private var eventSink: EventChannel.EventSink? = null
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
@@ -33,26 +40,72 @@ class MainActivity : FlutterActivity() {
         manager.start()
         usbTerminal = manager
 
-        // Device-side (AOA) link. The framed codec plugs in at
-        // AccessoryStreamListener once the shared protocol file lands; until
-        // then the streams are only logged so lifecycle can be tested.
+        // Device-side (AOA) link: the kiosk is the USB host and drives every
+        // step; the framed protocol lives in AccessoryLink.
+        var accRef: UsbAccessoryManager? = null
+        val link = AccessoryLink(
+            events = object : LinkEvents {
+                override fun onLinkState(state: String, detail: String?) =
+                    emitLink(mapOf("type" to "state", "state" to state, "detail" to detail))
+                override fun onPaymentRequest(reference: String, amount: String, currency: String) =
+                    emitLink(mapOf("type" to "paymentRequest", "reference" to reference,
+                        "amount" to amount, "currency" to currency))
+                override fun onCancel(reference: String) =
+                    emitLink(mapOf("type" to "cancel", "reference" to reference))
+                override fun onLinkClosed(reason: String) =
+                    emitLink(mapOf("type" to "linkClosed", "reason" to reason))
+            },
+            requestTeardown = { reason -> accRef?.teardown(reason) },
+            log = { Log.i(TAG, it) },
+        )
         val acc = UsbAccessoryManager(
             context = this,
             usbManager = getSystemService(USB_SERVICE) as UsbManager,
             onEvent = { state, detail ->
-                runOnUiThread { eventSink?.success(mapOf("state" to state, "detail" to detail)) }
+                emitLink(mapOf("type" to "state", "state" to state, "detail" to detail))
             },
-            listener = object : AccessoryStreamListener {
-                override fun onStreamsOpened(input: InputStream, output: OutputStream) {
-                    Log.i(TAG, "Accessory streams opened")
-                }
-                override fun onStreamsClosed(reason: String) {
-                    Log.i(TAG, "Accessory streams closed: $reason")
-                }
-            },
+            listener = link,
         )
+        accRef = acc
         acc.start()
         accessory = acc
+        accessoryLink = link
+
+        EventChannel(flutterEngine.dartExecutor.binaryMessenger, linkEventChannelName)
+            .setStreamHandler(object : EventChannel.StreamHandler {
+                override fun onListen(arguments: Any?, sink: EventChannel.EventSink) {
+                    linkSink = sink
+                }
+                override fun onCancel(arguments: Any?) {
+                    linkSink = null
+                }
+            })
+
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, linkMethodChannelName)
+            .setMethodCallHandler { call, result ->
+                try {
+                    when (call.method) {
+                        "connect" -> { acc.connect(); result.success(null) }
+                        "isLinkOpen" -> result.success(acc.isOpen())
+                        "sendPaymentResponse" -> {
+                            val details = call.argument<Map<String, Any?>>("details")
+                            val sent = link.sendPaymentResponse(
+                                reference = call.argument<String>("reference") ?: "",
+                                status = call.argument<String>("status") ?: "",
+                                approvalCode = call.argument<String>("approvalCode"),
+                                errorCode = call.argument<String>("errorCode"),
+                                message = call.argument<String>("message"),
+                                details = details?.let { JSONObject(it) },
+                            )
+                            result.success(sent)
+                        }
+                        else -> result.notImplemented()
+                    }
+                } catch (e: Exception) {
+                    Log.i(TAG, "usb_link call failed: ${e.javaClass.simpleName}")
+                    result.error("LINK_ERROR", "USB link call failed", null)
+                }
+            }
         acc.handleAttachIntent(intent)
 
         EventChannel(flutterEngine.dartExecutor.binaryMessenger, eventChannelName)
@@ -112,6 +165,8 @@ class MainActivity : FlutterActivity() {
     override fun cleanUpFlutterEngine(flutterEngine: FlutterEngine) {
         accessory?.stop()
         accessory = null
+        accessoryLink = null
+        linkSink = null
         usbTerminal?.stop()
         usbTerminal = null
         eventSink = null

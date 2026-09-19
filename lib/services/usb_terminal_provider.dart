@@ -23,6 +23,18 @@ class UsbTerminalProvider implements TerminalProvider {
   static const _methodChannel = MethodChannel('com.waha.waha_terminal/usb_terminal');
   static const _eventChannel = EventChannel('com.waha.waha_terminal/usb_terminal/events');
 
+  /// Bypasses requestPayment/receiveResponse only — connect/disconnect stay
+  /// real — so the app's own state machine (pending → reading → confirmed →
+  /// backend confirm) can be exercised end to end without a peripheral that
+  /// speaks this transport's made-up payload format (nothing does; that's
+  /// by design, see the class doc). Same pattern and same reasoning as
+  /// GeideaTerminalBridge.fakeTerminalEnabled in waha_platform: in-memory
+  /// only, never persisted, always resets to false on a fresh launch so a
+  /// terminal can't be left silently faking payments after a restart.
+  static bool mockPaymentEnabled = false;
+  static bool get _mockPayment =>
+      const bool.fromEnvironment('USB_MOCK_PAYMENT') || mockPaymentEnabled;
+
   final _connectionController = StreamController<TerminalConnectionEvent>.broadcast();
   StreamSubscription? _eventSub;
   bool _connected = false;
@@ -90,6 +102,7 @@ class UsbTerminalProvider implements TerminalProvider {
 
   @override
   Future<void> requestPayment({required double amount, required String reference}) async {
+    if (_mockPayment) return;
     final result = await _methodChannel.invokeMethod<Map>('requestPayment', {
       'amount': amount,
       'reference': reference,
@@ -102,6 +115,15 @@ class UsbTerminalProvider implements TerminalProvider {
 
   @override
   Future<TerminalPaymentResponse> receiveResponse({Duration timeout = const Duration(seconds: 90)}) async {
+    if (_mockPayment) {
+      await Future<void>.delayed(const Duration(seconds: 2));
+      debugPrint('[WahaTerminal] Payment completed (mocked — no peripheral involved)');
+      return const TerminalPaymentResponse(
+        approved: true,
+        authCode: 'USB-MOCK',
+        notes: {'mock': true},
+      );
+    }
     try {
       final result = await _methodChannel.invokeMethod<Map>('receiveResponse', {
         'timeoutMs': timeout.inMilliseconds,
