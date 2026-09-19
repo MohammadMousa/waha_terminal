@@ -1,7 +1,10 @@
 package com.waha.waha_terminal
 
+import android.content.Intent
 import android.hardware.usb.UsbManager
 import android.util.Log
+import java.io.InputStream
+import java.io.OutputStream
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.EventChannel
@@ -14,6 +17,7 @@ class MainActivity : FlutterActivity() {
     private val eventChannelName = "com.waha.waha_terminal/usb_terminal/events"
 
     private var usbTerminal: UsbTerminalManager? = null
+    private var accessory: UsbAccessoryManager? = null
     private var eventSink: EventChannel.EventSink? = null
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
@@ -28,6 +32,28 @@ class MainActivity : FlutterActivity() {
         )
         manager.start()
         usbTerminal = manager
+
+        // Device-side (AOA) link. The framed codec plugs in at
+        // AccessoryStreamListener once the shared protocol file lands; until
+        // then the streams are only logged so lifecycle can be tested.
+        val acc = UsbAccessoryManager(
+            context = this,
+            usbManager = getSystemService(USB_SERVICE) as UsbManager,
+            onEvent = { state, detail ->
+                runOnUiThread { eventSink?.success(mapOf("state" to state, "detail" to detail)) }
+            },
+            listener = object : AccessoryStreamListener {
+                override fun onStreamsOpened(input: InputStream, output: OutputStream) {
+                    Log.i(TAG, "Accessory streams opened")
+                }
+                override fun onStreamsClosed(reason: String) {
+                    Log.i(TAG, "Accessory streams closed: $reason")
+                }
+            },
+        )
+        acc.start()
+        accessory = acc
+        acc.handleAttachIntent(intent)
 
         EventChannel(flutterEngine.dartExecutor.binaryMessenger, eventChannelName)
             .setStreamHandler(object : EventChannel.StreamHandler {
@@ -78,7 +104,14 @@ class MainActivity : FlutterActivity() {
             }
     }
 
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        accessory?.handleAttachIntent(intent)
+    }
+
     override fun cleanUpFlutterEngine(flutterEngine: FlutterEngine) {
+        accessory?.stop()
+        accessory = null
         usbTerminal?.stop()
         usbTerminal = null
         eventSink = null

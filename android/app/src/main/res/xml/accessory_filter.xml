@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <usb-accessory
+        manufacturer="Waha"
+        model="WahaTerminal"
+        version="1" />
+</resources>
