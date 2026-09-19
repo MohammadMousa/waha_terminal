@@ -245,7 +245,7 @@ class TerminalState extends ChangeNotifier {
       final msg = result.errorMessage ?? 'Card read failed';
       final timedOut = msg.toLowerCase().contains('timeout');
       await _finishUsbPayment(reference, 'error',
-          errorCode: timedOut ? 'TIMEOUT' : null, message: msg, uiError: msg);
+          errorCode: timedOut ? 'TIMEOUT' : 'NFC_READ_FAILED', message: msg, uiError: msg);
     }
   }
 

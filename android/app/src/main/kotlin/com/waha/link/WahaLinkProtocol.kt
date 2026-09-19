@@ -71,6 +71,7 @@ object ErrorCode {
     const val CANCELLED = "CANCELLED"
     const val BUSY = "BUSY"
     const val NFC_UNAVAILABLE = "NFC_UNAVAILABLE"
+    const val NFC_READ_FAILED = "NFC_READ_FAILED"
     const val UNSUPPORTED_VERSION = "UNSUPPORTED_VERSION"
 }
 
