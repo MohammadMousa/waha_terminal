@@ -28,6 +28,15 @@ class UsbLinkService {
       })
       .asBroadcastStream();
 
+  /// Live native status: ready | connected | attached | roleMismatch | none.
+  Future<String> linkStatus() async {
+    try {
+      return await _method.invokeMethod<String>('linkStatus') ?? 'none';
+    } on PlatformException {
+      return 'none';
+    }
+  }
+
   /// Tries to open an already-attached accessory. Outcome arrives as events.
   Future<void> connect() async {
     try {

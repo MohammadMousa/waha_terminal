@@ -6,12 +6,14 @@ import 'screens/home_screen.dart';
 import 'screens/login_screen.dart';
 import 'services/api_client.dart';
 import 'services/local_prefs.dart';
+import 'services/screen_service.dart';
 import 'services/terminal_auth_service.dart';
 import 'state/terminal_state.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await LocalPrefs.init();
+  ScreenService.apply();
 
   final api = ApiClient();
   final state = TerminalState(api);

@@ -14,6 +14,8 @@ class LocalPrefs {
   static const _kApiBaseUrl  = 'waha.terminal.api_base_url';
   static const _kConnType    = 'waha.terminal.connection_type';
   static const _kDebugLevel  = 'waha.terminal.debug_level';
+  static const _kDebugMode   = 'waha.terminal.debug_mode';
+  static const _kKeepScreen  = 'waha.terminal.keep_screen_on';
 
   static const defaultApiBaseUrl = 'http://10.0.2.2:8081';
 
@@ -31,6 +33,14 @@ class LocalPrefs {
   // 'minimal' | 'full'
   static String get debugLevel => _p.getString(_kDebugLevel) ?? 'minimal';
   static Future<void> setDebugLevel(String v) => _p.setString(_kDebugLevel, v);
+
+  /// Shows the USB link event log on the ready screen. Off by default.
+  static bool get debugMode => _p.getBool(_kDebugMode) ?? false;
+  static Future<void> setDebugMode(bool v) => _p.setBool(_kDebugMode, v);
+
+  /// Prevents the screen lock/timeout while the app is open. On by default.
+  static bool get keepScreenOn => _p.getBool(_kKeepScreen) ?? true;
+  static Future<void> setKeepScreenOn(bool v) => _p.setBool(_kKeepScreen, v);
 
   // ── Auth ───────────────────────────────────────────────────────────────────
 

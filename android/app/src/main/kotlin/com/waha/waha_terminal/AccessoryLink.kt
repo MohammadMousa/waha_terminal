@@ -46,6 +46,9 @@ class AccessoryLink(
     private var peerHello = false
     private var inFlightReference: String? = null
 
+    /** Live: the link is open and the kiosk's hello has been received. */
+    fun isReady(): Boolean = synchronized(stateLock) { !closed && peerHello }
+
     override fun onStreamsOpened(input: InputStream, output: OutputStream) {
         val gen = synchronized(stateLock) {
             out = output

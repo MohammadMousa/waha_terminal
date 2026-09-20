@@ -181,6 +181,12 @@ class UsbAccessoryManager(
         return stillAttached && synchronized(lock) { descriptor != null }
     }
 
+    /** Live platform state: an accessory is enumerated (we are the device). */
+    fun hasAttachedAccessory(): Boolean = currentAttached() != null
+
+    /** Live platform state: a USB device is visible, i.e. this phone is the host. */
+    fun actingAsHost(): Boolean = try { usbManager.deviceList.isNotEmpty() } catch (_: Exception) { false }
+
     fun disconnect() {
         teardown("disconnected by app")
         Log.i(TAG, "USB connection closed")

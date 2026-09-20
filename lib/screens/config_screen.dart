@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import '../services/local_prefs.dart';
+import '../services/screen_service.dart';
 
 enum _ServerPreset {
   emulator('Emulator (10.0.2.2)', '10.0.2.2', 8081),
@@ -26,6 +27,8 @@ class _ConfigScreenState extends State<ConfigScreen> {
   String        _connType   = 'same_device';
   String        _debugLevel = 'minimal';
   bool          _customUrl  = false;
+  bool          _debugMode  = false;
+  bool          _keepScreenOn = true;
   bool          _saving     = false;
   _ServerPreset _preset     = _ServerPreset.custom;
 
@@ -35,6 +38,8 @@ class _ConfigScreenState extends State<ConfigScreen> {
     _customUrl  = LocalPrefs.customUrlEnabled;
     _connType   = LocalPrefs.connectionType;
     _debugLevel = LocalPrefs.debugLevel;
+    _debugMode  = LocalPrefs.debugMode;
+    _keepScreenOn = LocalPrefs.keepScreenOn;
 
     final stored = LocalPrefs.apiBaseUrl;
     final toParse = (stored != null && stored.isNotEmpty)
@@ -124,6 +129,9 @@ class _ConfigScreenState extends State<ConfigScreen> {
     if (_customUrl) await LocalPrefs.setApiBaseUrl(effectiveUrl);
     await LocalPrefs.setConnectionType(_connType);
     await LocalPrefs.setDebugLevel(_debugLevel);
+    await LocalPrefs.setDebugMode(_debugMode);
+    await LocalPrefs.setKeepScreenOn(_keepScreenOn);
+    await ScreenService.apply();
 
     if (mounted) {
       setState(() => _saving = false);
@@ -288,6 +296,30 @@ class _ConfigScreenState extends State<ConfigScreen> {
               groupValue: _debugLevel,
               onChanged: (v) => setState(() => _debugLevel = v!),
             ),
+
+          const SizedBox(height: 24),
+
+          // ── Display / debug ─────────────────────────────────────────────
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            title: const Text('Keep screen on'),
+            subtitle: Text(
+              'Prevent the screen lock while the app is open',
+              style: TextStyle(color: scheme.outline, fontSize: 12),
+            ),
+            value: _keepScreenOn,
+            onChanged: (v) => setState(() => _keepScreenOn = v),
+          ),
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            title: const Text('Debug mode'),
+            subtitle: Text(
+              'Show the USB link event log on the ready screen',
+              style: TextStyle(color: scheme.outline, fontSize: 12),
+            ),
+            value: _debugMode,
+            onChanged: (v) => setState(() => _debugMode = v),
+          ),
 
           const SizedBox(height: 32),
           FilledButton(

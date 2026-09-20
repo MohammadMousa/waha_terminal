@@ -3,6 +3,7 @@ package com.waha.waha_terminal
 import android.content.Intent
 import android.hardware.usb.UsbManager
 import android.util.Log
+import android.view.WindowManager
 import com.waha.link.ErrorCode
 import com.waha.link.Status
 import org.json.JSONObject
@@ -92,6 +93,22 @@ class MainActivity : FlutterActivity() {
         accessory = acc
         accessoryLink = link
 
+        // Window flag only: holds while this activity is visible, clears itself
+        // when the app leaves the foreground. Needs no permission.
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "com.waha.waha_terminal/screen")
+            .setMethodCallHandler { call, result ->
+                if (call.method == "setKeepScreenOn") {
+                    val on = call.argument<Boolean>("on") ?: false
+                    runOnUiThread {
+                        if (on) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                        else window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                    }
+                    result.success(null)
+                } else {
+                    result.notImplemented()
+                }
+            }
+
         EventChannel(flutterEngine.dartExecutor.binaryMessenger, linkEventChannelName)
             .setStreamHandler(object : EventChannel.StreamHandler {
                 override fun onListen(arguments: Any?, sink: EventChannel.EventSink) {
@@ -108,6 +125,15 @@ class MainActivity : FlutterActivity() {
                     when (call.method) {
                         "connect" -> { acc.connect(); result.success(null) }
                         "isLinkOpen" -> result.success(acc.isOpen())
+                        // Everything derived live, nothing cached.
+                        "linkStatus" -> result.success(
+                            when {
+                                acc.isOpen() -> if (link.isReady()) "ready" else "connected"
+                                acc.hasAttachedAccessory() -> "attached"
+                                acc.actingAsHost() -> "roleMismatch"
+                                else -> "none"
+                            }
+                        )
                         "sendPaymentResponse" -> {
                             val details = call.argument<Map<String, Any?>>("details")
                             val sent = link.sendPaymentResponse(

@@ -21,6 +21,7 @@ class TerminalState extends ChangeNotifier {
   String? _currency;
   String? _errorMessage;
   Timer? _pollTimer;
+  Timer? _resultResetTimer;
   TerminalProvider? _provider;
   StreamSubscription? _connectionSub;
   String? _lastConnectionError;
@@ -55,26 +56,71 @@ class TerminalState extends ChangeNotifier {
   String? get currency => _currency;
   String? get errorMessage => _errorMessage;
 
-  /// Human-readable USB link status for the idle screen; null outside USB mode.
+  bool get linkReady => usbMode && _linkState == 'ready';
+
+  /// Ready-screen headline. Null outside USB mode (the screen then says
+  /// "Ready"). It must never claim "Ready" unless the kiosk link is up.
+  String? get linkHeadline {
+    if (!usbMode) return null;
+    switch (_linkState) {
+      case 'ready':
+        return 'Ready';
+      case 'connected':
+      case 'deviceAttached':
+      case 'permissionRequested':
+        return 'Connecting…';
+      default:
+        return 'Not connected';
+    }
+  }
+
+  /// Sub-line under the headline; null outside USB mode.
   String? get linkStatusText {
     if (!usbMode) return null;
     switch (_linkState) {
       case 'ready':
-        return 'Kiosk connected';
+        return 'Kiosk connected — waiting for payment';
       case 'connected':
-        return 'USB linked — handshaking…';
+        return 'USB linked — handshaking with the kiosk…';
       case 'deviceAttached':
-        return 'USB accessory attached…';
+        return 'USB cable detected…';
       case 'permissionRequested':
-        return 'Waiting for USB permission…';
+        return 'Accept the USB permission prompt on this phone';
       case 'roleMismatch':
-        return 'This phone is acting as the USB host. Swap roles (Settings → '
-            'USB controlled by → connected device) or use a USB-A end on the kiosk side.';
+        return 'This phone is acting as the USB host, so the kiosk cannot link. '
+            'Swap roles (Settings → USB controlled by → connected device) or '
+            'use a USB-A end on the kiosk side.';
       case 'error':
-        return 'USB error: ${_linkDetail ?? 'unknown'}';
+        return _linkDetail == 'PERMISSION_DENIED'
+            ? 'USB permission was denied — unplug and replug the cable'
+            : 'USB link error (${_linkDetail ?? 'unknown'}) — replug the cable';
       default:
-        return 'Waiting for the kiosk — connect the USB cable';
+        return 'Plug the USB cable into the kiosk';
     }
+  }
+
+  /// Re-derives the link state from the platform. Events can be missed (sent
+  /// before this side listened) or made stale by an already-open link, so the
+  /// screen never relies on them alone.
+  Future<void> refreshLinkStatus() async {
+    final link = _usbLink;
+    if (!usbMode || link == null) return;
+    final live = await link.linkStatus();
+    switch (live) {
+      case 'ready':
+      case 'connected':
+      case 'roleMismatch':
+        _linkState = live;
+      case 'attached':
+        // Cable is there but not open yet: keep a more specific transient
+        // state (permission prompt, denied, error) if we have one.
+        const keep = {'permissionRequested', 'deviceAttached', 'error'};
+        if (!keep.contains(_linkState)) _linkState = 'deviceAttached';
+      default:
+        _linkState = null;
+        _linkDetail = null;
+    }
+    notifyListeners();
   }
 
   // Rebuilds the provider from LocalPrefs.connectionType every call, so
@@ -182,12 +228,10 @@ class TerminalState extends ChangeNotifier {
   // ── USB (device) mode ──────────────────────────────────────────────────────
 
   Future<void> _initUsbLink() async {
-    _linkState = null;
-    _linkDetail = null;
     _usbLink ??= UsbLinkService();
     _usbSub = _usbLink!.events.listen(_onLinkEvent);
-    notifyListeners();
     await _usbLink!.connect();
+    await refreshLinkStatus();
   }
 
   void _onLinkEvent(UsbLinkEvent e) {
@@ -318,14 +362,32 @@ class TerminalState extends ChangeNotifier {
     _set(TerminalStatus.idle);
   }
 
+  /// How long a result screen (accepted / cancelled / timed out / error)
+  /// stays up before the terminal returns to the ready screen by itself.
+  static const _resultDisplayTime = Duration(seconds: 4);
+
+  bool _isResult(TerminalStatus s) =>
+      s == TerminalStatus.confirmed ||
+      s == TerminalStatus.cancelled ||
+      s == TerminalStatus.timeout ||
+      s == TerminalStatus.error;
+
   void _set(TerminalStatus s) {
+    _resultResetTimer?.cancel();
+    _resultResetTimer = null;
     _status = s;
+    if (_isResult(s)) {
+      _resultResetTimer = Timer(_resultDisplayTime, () {
+        if (_status == s) dismissResult();
+      });
+    }
     notifyListeners();
   }
 
   @override
   void dispose() {
     _pollTimer?.cancel();
+    _resultResetTimer?.cancel();
     _connectionSub?.cancel();
     _usbSub?.cancel();
     _provider?.dispose();

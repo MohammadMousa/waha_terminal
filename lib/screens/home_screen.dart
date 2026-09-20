@@ -12,13 +12,27 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> {
+class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _checkConfig();
     });
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState lifecycle) {
+    if (lifecycle == AppLifecycleState.resumed) {
+      context.read<TerminalState>().refreshLinkStatus();
+    }
   }
 
   void _checkConfig() {
@@ -64,8 +78,9 @@ class _HomeScreenState extends State<HomeScreen> {
       case TerminalStatus.idle:
         return _IdleView(
           key: const ValueKey('idle'),
+          headline: state.linkHeadline,
           linkStatus: state.linkStatusText,
-          linkLog: state.linkLog,
+          linkLog: LocalPrefs.debugMode ? state.linkLog : const [],
         );
 
       case TerminalStatus.pending:
@@ -120,9 +135,10 @@ class _HomeScreenState extends State<HomeScreen> {
 }
 
 class _IdleView extends StatelessWidget {
+  final String? headline;
   final String? linkStatus;
   final List<String> linkLog;
-  const _IdleView({super.key, this.linkStatus, this.linkLog = const []});
+  const _IdleView({super.key, this.headline, this.linkStatus, this.linkLog = const []});
 
   @override
   Widget build(BuildContext context) {
@@ -134,20 +150,20 @@ class _IdleView extends StatelessWidget {
         children: [
           Icon(Icons.contactless_outlined, size: 80, color: scheme.outline),
           const SizedBox(height: 24),
-          Text('Ready', style: Theme.of(context).textTheme.headlineSmall),
+          Text(headline ?? 'Ready', style: Theme.of(context).textTheme.headlineSmall),
           const SizedBox(height: 8),
-          Text(
-            configured ? 'Waiting for payment…' : 'Not configured — open Settings',
-            style: TextStyle(color: scheme.outline),
-          ),
-          if (linkStatus != null) ...[
-            const SizedBox(height: 16),
+          if (linkStatus == null)
+            Text(
+              configured ? 'Waiting for payment…' : 'Not configured — open Settings',
+              style: TextStyle(color: scheme.outline),
+            )
+          else ...[
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 32),
               child: Text(
                 linkStatus!,
                 textAlign: TextAlign.center,
-                style: TextStyle(color: scheme.primary, fontSize: 13),
+                style: TextStyle(color: scheme.outline),
               ),
             ),
             if (linkLog.isNotEmpty) ...[

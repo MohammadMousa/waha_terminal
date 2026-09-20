@@ -63,14 +63,38 @@ over one link, and payment acceptance.
    still validates the backend URL, even though USB mode does not use it.)
 3. Connect the phones with a cable. The kiosk starts the accessory handshake;
    accept the system prompt "open Waha Terminal for this accessory".
-4. The idle screen shows **Kiosk connected** once the handshake completes.
+4. The ready screen shows **Ready — Kiosk connected** once the handshake
+   completes.
 
-<img src="docs/screenshots/settings.jpg" width="240" alt="Terminal Setup: connection type and backend URL">
+<p>
+  <img src="docs/screenshots/settings1.jpg" width="240" alt="Terminal Setup: connection type and backend URL">
+  <img src="docs/screenshots/settings2.jpg" width="240" alt="Terminal Setup: backend URL preset, card data detail, Keep screen on and Debug mode">
+</p>
+
+### Ready screen
+
+In USB mode the ready screen is derived live from the platform, never from a
+remembered flag, and only says **Ready** once the kiosk has said hello:
+
+| Situation | Headline | Line under it |
+|---|---|---|
+| Kiosk hello done | **Ready** | Kiosk connected — waiting for payment |
+| Cable detected, handshaking | Connecting… | USB linked — handshaking with the kiosk… |
+| USB permission prompt pending | Connecting… | Accept the USB permission prompt on this phone |
+| Permission denied / link error | Not connected | What happened, and to replug the cable |
+| This phone became the USB host | Not connected | Explains the role swap or the USB-A fix |
+| Nothing plugged in | Not connected | Plug the USB cable into the kiosk |
+
+The state is re-read on start, after Save & Connect and when the app returns to
+the foreground, so a missed event cannot leave the screen stale. After a
+payment the result screen (accepted / cancelled / timed out / error) goes back
+to the ready screen by itself after 4 seconds.
 
 Cable notes:
 
-- **USB-A (host side) to USB-C:** the A end is always the host, so roles are
-  deterministic.
+- **USB-A end to USB-C:** the device on the A end is the host, so the kiosk
+  goes on the A end and roles are deterministic. Between two phones, put a
+  USB-C-to-A OTG adapter on the host (kiosk-side) phone.
 - **USB-C to USB-C between two phones:** roles are negotiated and can come out
   backwards. The terminal then shows *"This phone is acting as the USB host"*;
   on Samsung use *USB controlled by → connected device*, or use a USB-A end on
@@ -106,8 +130,17 @@ must stay byte-identical.
   cached flag; detach or any stream failure tears everything down at once.
 - Card data, amounts, references and payloads are never logged. Lifecycle logs
   use the `WahaTerminal` tag.
-- In USB mode the idle screen lists the most recent link events with
-  timestamps, so a screenshot shows where a run stopped.
+- With **Settings → Debug mode** on (off by default) the ready screen lists
+  the most recent link events with timestamps, so a screenshot shows where a
+  run stopped.
+
+  <img src="docs/screenshots/usb-idle-linked-debug.jpg" width="240" alt="Ready screen with Debug mode on: link event log">
+
+- **Settings → Keep screen on** (on by default) stops the screen lock while the
+  app is open, so NFC reading and the amount on screen are not lost to the
+  screen timeout. It does not stop the power button.
+- Result screens (accepted / cancelled / timed out / error) return to the ready
+  screen by themselves after 4 seconds; **Done** dismisses them sooner.
 
 ## Running locally
 
@@ -147,6 +180,7 @@ lib/
     local_prefs.dart         persisted settings
     terminal_auth_service.dart
     nfc_service.dart         NFC poll + EMV read
+    screen_service.dart      keep-screen-on (window flag via method channel)
     terminal_provider.dart   transport interface
     nfc_terminal_provider.dart
     usb_link_service.dart    Dart side of the USB accessory link
