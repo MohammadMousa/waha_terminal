@@ -147,7 +147,7 @@ class _ConfigScreenState extends State<ConfigScreen> {
           const SizedBox(height: 8),
           for (final opt in [
             ('same_device', 'Same Device',  'NFC on this device'),
-            ('usb',         'USB',          'USB cable to hardware terminal (future)'),
+            ('usb',         'USB',          'USB cable to the kiosk (this phone acts as the terminal)'),
             ('bluetooth',   'Bluetooth',    'BT pairing to hardware terminal (future)'),
           ])
             RadioListTile<String>(
