@@ -142,6 +142,13 @@ class UsbAccessoryManager(
     }
 
     private fun open(acc: UsbAccessory) {
+        // Attach intent, permission broadcast and a Dart-side connect() can all
+        // race to here; re-opening a live link would close it under the peer
+        // and discard the hello already written.
+        if (synchronized(lock) { accessory == acc && descriptor != null } && isOpen()) {
+            Log.i(TAG, "USB accessory already open")
+            return
+        }
         try {
             teardown("reopening")
             val pfd = usbManager.openAccessory(acc)

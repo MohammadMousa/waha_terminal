@@ -74,7 +74,10 @@ class MainActivity : FlutterActivity() {
                     emitLink(mapOf("type" to "linkClosed", "reason" to reason))
             },
             requestTeardown = { reason -> accRef?.teardown(reason) },
-            log = { Log.i(TAG, it) },
+            log = { line ->
+                Log.i(TAG, line)
+                emitLink(mapOf("type" to "log", "line" to line))
+            },
         )
         val acc = UsbAccessoryManager(
             context = this,

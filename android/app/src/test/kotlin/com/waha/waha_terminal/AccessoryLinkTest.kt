@@ -93,9 +93,10 @@ class AccessoryLinkTest {
         fromTerminal.poll(3, TimeUnit.SECONDS) ?: throw AssertionError("no frame from terminal")
 
     private fun completeHandshake() {
-        assertEquals(MsgType.HELLO, nextFrame().getString("type"))
+        assertEquals(MsgType.HELLO, nextFrame().getString("type")) // unsolicited, on open
         kioskSend(LinkMessages.hello(WahaLink.APP_KIOSK))
         assertEquals("ready", events.states.poll(3, TimeUnit.SECONDS)?.first)
+        assertEquals(MsgType.HELLO, nextFrame().getString("type")) // reply to the kiosk hello
     }
 
     @Test fun terminalSendsHelloFirstAndBecomesReadyOnKioskHello() {
@@ -105,6 +106,28 @@ class AccessoryLinkTest {
         assertEquals(WahaLink.PROTOCOL_VERSION, hello.getInt("protocol"))
         kioskSend(LinkMessages.hello(WahaLink.APP_KIOSK))
         assertEquals("ready", events.states.poll(3, TimeUnit.SECONDS)?.first)
+        val reply = nextFrame()
+        assertEquals(MsgType.HELLO, reply.getString("type"))
+        assertEquals(WahaLink.APP_TERMINAL, reply.getString("app"))
+    }
+
+    @Test fun everyKioskHelloIsAnsweredAndPaymentsStillWorkAfterward() {
+        completeHandshake()
+        // The kiosk reconnects before each payment and re-sends hello; the
+        // stream stays open, so the terminal must answer again each time.
+        for (i in 1..3) {
+            kioskSend(LinkMessages.hello(WahaLink.APP_KIOSK))
+            val reply = nextFrame()
+            assertEquals(MsgType.HELLO, reply.getString("type"))
+            assertEquals(WahaLink.APP_TERMINAL, reply.getString("app"))
+        }
+        // "ready" is reported once, not per hello.
+        assertNull(events.states.poll(200, TimeUnit.MILLISECONDS))
+
+        kioskSend(LinkMessages.paymentRequest("ord-1", "34.20", "EGP"))
+        assertEquals("ord-1", events.requests.poll(3, TimeUnit.SECONDS)?.first)
+        assertTrue(link.sendPaymentResponse("ord-1", Status.APPROVED, approvalCode = "123456"))
+        assertEquals(Status.APPROVED, nextFrame().getString("status"))
     }
 
     @Test fun wrongProtocolVersionIsUnsupportedAndTearsDown() {
@@ -124,6 +147,7 @@ class AccessoryLinkTest {
 
         kioskSend(LinkMessages.hello(WahaLink.APP_KIOSK))
         events.states.poll(3, TimeUnit.SECONDS)
+        assertEquals(MsgType.HELLO, nextFrame().getString("type")) // hello reply
         val late = LinkMessages.ping()
         kioskSend(late)
         assertEquals(late.getString("id"), nextFrame().getString("id"))
@@ -233,5 +257,36 @@ class AccessoryLinkTest {
         assertEquals("detached", events.closed.poll(3, TimeUnit.SECONDS))
         assertNull(events.closed.poll(200, TimeUnit.MILLISECONDS))
         assertFalse(link.sendPaymentResponse("ord-1", Status.APPROVED, approvalCode = "1"))
+    }
+
+    @Test fun oldReaderThreadFailureDoesNotKillAReopenedLink() {
+        completeHandshake()
+
+        // Reopen on a fresh pair of pipes, as a second open() of the accessory would.
+        val newTerminalIn = PipedInputStream(128 * 1024)
+        val newKioskOut = PipedOutputStream(newTerminalIn)
+        val newKioskIn = PipedInputStream(128 * 1024)
+        val newTerminalOut = PipedOutputStream(newKioskIn)
+        val fromNew = LinkedBlockingQueue<JSONObject>()
+        Thread {
+            val d = FrameDecoder(); val b = ByteArray(4096)
+            try { while (true) { val n = newKioskIn.read(b); if (n < 0) break; d.feed(b, n).forEach { fromNew.add(it) } } }
+            catch (_: Exception) {}
+        }.apply { isDaemon = true }.start()
+
+        link.onStreamsClosed("reopen")
+        link.onStreamsOpened(newTerminalIn, newTerminalOut)
+        assertEquals(MsgType.HELLO, fromNew.poll(3, TimeUnit.SECONDS)?.getString("type"))
+
+        // The old link's blocked read now fails; that must be ignored.
+        // Closing the old WRITER end makes the old reader see end-of-stream
+        // (a blocked PipedInputStream never notices its own side closing).
+        kioskOut.close()
+        Thread.sleep(1600)
+
+        val ping = LinkMessages.ping()
+        newKioskOut.write(FrameCodec.encode(ping)); newKioskOut.flush()
+        assertEquals(ping.getString("id"), fromNew.poll(3, TimeUnit.SECONDS)?.getString("id"))
+        assertNull(events.states.poll(200, TimeUnit.MILLISECONDS)?.takeIf { it.first == "error" })
     }
 }

@@ -62,7 +62,11 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget _buildBody(TerminalState state, ColorScheme scheme) {
     switch (state.status) {
       case TerminalStatus.idle:
-        return _IdleView(key: const ValueKey('idle'), linkStatus: state.linkStatusText);
+        return _IdleView(
+          key: const ValueKey('idle'),
+          linkStatus: state.linkStatusText,
+          linkLog: state.linkLog,
+        );
 
       case TerminalStatus.pending:
       case TerminalStatus.reading:
@@ -117,7 +121,8 @@ class _HomeScreenState extends State<HomeScreen> {
 
 class _IdleView extends StatelessWidget {
   final String? linkStatus;
-  const _IdleView({super.key, this.linkStatus});
+  final List<String> linkLog;
+  const _IdleView({super.key, this.linkStatus, this.linkLog = const []});
 
   @override
   Widget build(BuildContext context) {
@@ -145,6 +150,20 @@ class _IdleView extends StatelessWidget {
                 style: TextStyle(color: scheme.primary, fontSize: 13),
               ),
             ),
+            if (linkLog.isNotEmpty) ...[
+              const SizedBox(height: 16),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 24),
+                child: Text(
+                  linkLog.join('\n'),
+                  style: TextStyle(
+                    color: scheme.outline,
+                    fontSize: 10,
+                    fontFamily: 'monospace',
+                  ),
+                ),
+              ),
+            ],
           ],
         ],
       ),

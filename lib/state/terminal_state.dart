@@ -31,10 +31,24 @@ class TerminalState extends ChangeNotifier {
   StreamSubscription? _usbSub;
   String? _linkState;
   String? _linkDetail;
+  final List<String> _linkLog = [];
   String? _usbReference;
   Completer<void>? _usbCancel;
 
   bool get usbMode => LocalPrefs.connectionType == 'usb';
+
+  /// Most recent link events (newest last), shown on the idle screen in USB
+  /// mode so a screenshot of the terminal shows where a run stopped.
+  List<String> get linkLog => List.unmodifiable(_linkLog);
+
+  void _logLink(String line) {
+    final t = DateTime.now();
+    final hh = t.hour.toString().padLeft(2, '0');
+    final mm = t.minute.toString().padLeft(2, '0');
+    final ss = t.second.toString().padLeft(2, '0');
+    _linkLog.add('$hh:$mm:$ss $line');
+    if (_linkLog.length > 14) _linkLog.removeAt(0);
+  }
 
   TerminalStatus get status => _status;
   double? get amount => _amount;
@@ -181,6 +195,10 @@ class TerminalState extends ChangeNotifier {
       case 'state':
         _linkState = e.state;
         _linkDetail = e.detail;
+        _logLink('state: ${e.state}${e.detail != null ? ' (${e.detail})' : ''}');
+        notifyListeners();
+      case 'log':
+        _logLink(e.data['line'] as String? ?? '');
         notifyListeners();
       case 'paymentRequest':
         _onUsbPaymentRequest(

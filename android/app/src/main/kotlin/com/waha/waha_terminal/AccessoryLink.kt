@@ -42,17 +42,20 @@ class AccessoryLink(
 
     @Volatile private var out: OutputStream? = null
     private var closed = true
+    private var generation = 0
     private var peerHello = false
     private var inFlightReference: String? = null
 
     override fun onStreamsOpened(input: InputStream, output: OutputStream) {
-        synchronized(stateLock) {
+        val gen = synchronized(stateLock) {
             out = output
             closed = false
             peerHello = false
             inFlightReference = null
+            ++generation
         }
-        Thread({ readLoop(input) }, "waha-link-reader").apply { isDaemon = true }.start()
+        log("Link opened")
+        Thread({ readLoop(input, gen) }, "waha-link-reader").apply { isDaemon = true }.start()
     }
 
     override fun onStreamsClosed(reason: String) {
@@ -67,23 +70,29 @@ class AccessoryLink(
         events.onLinkClosed(reason)
     }
 
-    private fun readLoop(input: InputStream) {
+    // A reader thread belongs to exactly one link generation: when a link is
+    // torn down and reopened, the old thread's read failure must not be
+    // mistaken for a failure of the new link.
+    private fun readLoop(input: InputStream, gen: Int) {
+        log("Sending hello")
         if (!send(LinkMessages.hello(WahaLink.APP_TERMINAL))) return
+        log("Hello sent")
         val decoder = FrameDecoder()
         val buffer = ByteArray(16 * 1024)
         try {
             while (true) {
                 val n = input.read(buffer)
                 if (n < 0) {
-                    fail("end of stream", null)
+                    fail("end of stream", null, gen)
                     return
                 }
+                log("Received $n bytes")
                 for (frame in decoder.feed(buffer, n)) handle(LinkMessages.parse(frame))
             }
         } catch (e: LinkProtocolException) {
-            fail("protocol error: ${e.message}", ErrorCode.INVALID_RESPONSE)
+            fail("protocol error: ${e.message}", ErrorCode.INVALID_RESPONSE, gen)
         } catch (e: IOException) {
-            fail("read failed", null)
+            fail("read failed", null, gen)
         }
     }
 
@@ -107,22 +116,34 @@ class AccessoryLink(
 
     private fun handleHello(msg: LinkMessage) {
         if (msg.protocol != WahaLink.PROTOCOL_VERSION) {
-            fail("unsupported protocol version", ErrorCode.UNSUPPORTED_VERSION)
+            failCurrent("unsupported protocol version", ErrorCode.UNSUPPORTED_VERSION)
             return
         }
         if (msg.app != WahaLink.APP_KIOSK) {
-            fail("hello from unexpected peer", ErrorCode.INVALID_RESPONSE)
+            failCurrent("hello from unexpected peer", ErrorCode.INVALID_RESPONSE)
             return
         }
-        synchronized(stateLock) { peerHello = true }
-        log("Link ready")
-        events.onLinkState("ready", null)
+        val first = synchronized(stateLock) {
+            val wasFirst = !peerHello
+            peerHello = true
+            wasFirst
+        }
+        if (first) {
+            log("Hello received")
+            log("Link ready")
+            events.onLinkState("ready", null)
+        }
+        // Answer EVERY kiosk hello, not only the first: the kiosk re-sends its
+        // hello while waiting and reconnects before each payment while this
+        // stream stays open, so the unsolicited hello on open may never be
+        // seen. The kiosk never answers a hello, so there is no loop.
+        send(LinkMessages.hello(WahaLink.APP_TERMINAL))
     }
 
     // Neither side sends payment_* before receiving the peer's hello.
     private fun requireHello(type: String): Boolean {
         val ok = synchronized(stateLock) { peerHello }
-        if (!ok) fail("$type before hello", ErrorCode.INVALID_RESPONSE)
+        if (!ok) failCurrent("$type before hello", ErrorCode.INVALID_RESPONSE)
         return ok
     }
 
@@ -178,8 +199,13 @@ class AccessoryLink(
 
     private fun send(json: JSONObject): Boolean {
         var failed = false
+        var gen = 0
         synchronized(writeLock) {
-            val stream = out ?: return false
+            val stream: OutputStream
+            synchronized(stateLock) {
+                stream = out ?: return false
+                gen = generation
+            }
             try {
                 stream.write(FrameCodec.encode(json))
                 stream.flush()
@@ -188,17 +214,21 @@ class AccessoryLink(
             }
         }
         if (failed) {
-            fail("write failed", ErrorCode.WRITE_FAILED)
+            fail("write failed", ErrorCode.WRITE_FAILED, gen)
             return false
         }
         return true
     }
 
+    private fun failCurrent(reason: String, errorCode: String?) =
+        fail(reason, errorCode, synchronized(stateLock) { generation })
+
     // Any stream failure tears down at once; teardown closes the streams and
-    // calls onStreamsClosed. Never called while holding a lock.
-    private fun fail(reason: String, errorCode: String?) {
-        val alreadyClosed = synchronized(stateLock) { closed }
-        if (alreadyClosed) return
+    // calls onStreamsClosed. Only acts if [gen] is still the live generation.
+    // Never called while holding a lock.
+    private fun fail(reason: String, errorCode: String?, gen: Int) {
+        val stale = synchronized(stateLock) { closed || gen != generation }
+        if (stale) return
         log("Link failed: $reason")
         if (errorCode != null) events.onLinkState("error", errorCode)
         requestTeardown(reason)
