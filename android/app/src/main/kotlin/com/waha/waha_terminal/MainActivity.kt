@@ -3,6 +3,8 @@ package com.waha.waha_terminal
 import android.content.Intent
 import android.hardware.usb.UsbManager
 import android.util.Log
+import com.waha.link.ErrorCode
+import com.waha.link.Status
 import org.json.JSONObject
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -47,9 +49,25 @@ class MainActivity : FlutterActivity() {
             events = object : LinkEvents {
                 override fun onLinkState(state: String, detail: String?) =
                     emitLink(mapOf("type" to "state", "state" to state, "detail" to detail))
-                override fun onPaymentRequest(reference: String, amount: String, currency: String) =
-                    emitLink(mapOf("type" to "paymentRequest", "reference" to reference,
-                        "amount" to amount, "currency" to currency))
+                override fun onPaymentRequest(reference: String, amount: String, currency: String) {
+                    runOnUiThread {
+                        val sink = linkSink
+                        if (sink == null) {
+                            // The Dart side is not listening (not signed in, or not in USB
+                            // mode yet): answer now rather than let the kiosk wait to time out.
+                            Log.i(TAG, "Payment request refused: terminal app not ready")
+                            accessoryLink?.sendPaymentResponse(
+                                reference = reference,
+                                status = Status.ERROR,
+                                errorCode = ErrorCode.NOT_CONNECTED,
+                                message = "Terminal app is not ready (sign in and set Connection Type to USB)",
+                            )
+                        } else {
+                            sink.success(mapOf("type" to "paymentRequest", "reference" to reference,
+                                "amount" to amount, "currency" to currency))
+                        }
+                    }
+                }
                 override fun onCancel(reference: String) =
                     emitLink(mapOf("type" to "cancel", "reference" to reference))
                 override fun onLinkClosed(reason: String) =
