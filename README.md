@@ -65,6 +65,8 @@ over one link, and payment acceptance.
    accept the system prompt "open Waha Terminal for this accessory".
 4. The idle screen shows **Kiosk connected** once the handshake completes.
 
+<img src="docs/screenshots/settings.jpg" width="240" alt="Terminal Setup: connection type and backend URL">
+
 Cable notes:
 
 - **USB-A (host side) to USB-C:** the A end is always the host, so roles are
